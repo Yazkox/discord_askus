@@ -53,7 +53,7 @@ class MyClient(discord.Client):
     async def my_background_task(self):
         last_poll_ts = self.data_base.get_last_poll()
         if datetime.now() < incr_time(datetime.fromtimestamp(last_poll_ts)):
-            pass #return
+            return
         question = self.data_base.get_random_question()
         if question is None:
             question = "Je n'ai plus de question à poser (c'est bien réel), qui doit régler ce problème ?"
