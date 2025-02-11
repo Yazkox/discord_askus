@@ -13,10 +13,9 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_NAME = "test_bots"
 CHANNEL_NAME = "questions-cringes"
 POLL_DELTA = timedelta(days=1.0)
-NEXT_ASK_TIME = datetime.now().replace(second=0, microsecond=0) + timedelta(minutes=1)
 
 def incr_time(time: datetime) -> datetime:
-    return  time.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    return time.replace( minute=0, second=0, microsecond=0) + timedelta(hours=1)
 
 class MyClient(discord.Client):
     def __init__(self, *args, **kwargs):
@@ -50,12 +49,11 @@ class MyClient(discord.Client):
         next_time = incr_time(datetime.now()).strftime("%H:%M:%S - %m/%d/%Y")
         print(f"Successfuly sent poll ! next poll at {next_time}")
         
-    @tasks.loop(seconds=2)
+    @tasks.loop(seconds=60)
     async def my_background_task(self):
         last_poll_ts = self.data_base.get_last_poll()
-        print(last_poll_ts)
         if datetime.now() < incr_time(datetime.fromtimestamp(last_poll_ts)):
-            return
+            pass #return
         question = self.data_base.get_random_question()
         if question is None:
             question = "Je n'ai plus de question à poser (c'est bien réel), qui doit régler ce problème ?"
@@ -72,7 +70,7 @@ class MyClient(discord.Client):
         if message.channel.type != discord.ChannelType.private:
             return
         if message.content.startswith("/add"):
-            self.data_base.add_question(message.content[4:], message.author.display_name)
+            self.data_base.add_question(message.content[5:], message.author.display_name)
             await message.channel.send("J'ai bien ajouté ta question")
 
 
