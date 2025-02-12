@@ -15,6 +15,11 @@ class DataManager:
             self.data = {"last_poll_ts": 0, "questions": []}
             self.update_json()
             
+    def update_from_json(self):
+        with open(self.data_file, "r") as f:
+                self.data = json.loads(f.read())
+                
+
     def update_json(self):
         with open(self.data_file, "w") as f:
             f.write(json.dumps(self.data, indent=4))
@@ -53,6 +58,11 @@ class DataManager:
             question["asked"] = False
         self.update_json()
         
+    def remaining_questions(self) -> list:
+        return [question for question in self.data["questions"] if not question["asked"]]
+
         
         
-test = DataManager()
+if __name__=="__main__":
+    test = DataManager()
+    test.reset_question()
