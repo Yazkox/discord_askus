@@ -9,7 +9,7 @@ from custom_poll import Poll
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = 1338806572125786152
+GUILD_ID = 1012323355346608198
 CHANNEL_NAME = "askus"
 POLL_DELTA = timedelta(hours=14)
 
@@ -68,7 +68,7 @@ class MyClient(discord.Client):
         poll_message: discord.Message = await channel.send(message_str, embed=poll_data.get_front_embed())
         for _, reaction in poll_data.choices.items():
             await poll_message.add_reaction(reaction)
-        thread = await poll_message.create_thread(name="Réactions et résultats")
+        thread = await poll_message.create_thread(name="Réactions et résultats - " + datetime.now().strftime("%m/%d/%Y"))
         result_message = await thread.send("Résultats: ", embed=poll_data.get_thread_embed({}))
         next_time = incr_time(datetime.now()).strftime("%H:%M:%S - %m/%d/%Y")
         self.data_base.add_active_poll(poll_data, poll_message.id, result_message.id)
