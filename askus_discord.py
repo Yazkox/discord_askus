@@ -1,0 +1,224 @@
+import discord
+from discord.ext import tasks
+from dotenv import load_dotenv
+from datetime import datetime, timedelta, timezone
+import json
+from typing import Dict
+from pollclient import PollClient
+import random
+import os
+
+load_dotenv()
+TOKEN = os.getenv("DISCORD_TOKEN")
+TZ = timezone.utc
+
+
+class AskUsClient(PollClient):
+
+    COMMAND_PREFIX = "/askus"
+
+    def __init__(
+        self,
+        *args,
+        **kwargs,
+    ):
+        """Poll client for discord
+
+        Args:
+            db_url (_type_, optional): url of the mongo database. Defaults to "mongodb://localhost:27017/".
+        """
+        super().__init__(*args, **kwargs)
+        self.askus_collection = None
+        self.question_collection = None
+
+    def run(self, *args, **kwargs):
+        self.askus_collection = self.database.get_collection("askus")
+        self.question_collection = self.database.get_collection("questions")
+        super().run(*args, **kwargs)
+
+    async def setup_hook(self) -> None:
+        self.my_background_task.start()
+
+    async def on_ready(self):
+        print(f"Logged in as {self.user} (ID: {self.user.id})")
+        print("------")
+
+    @tasks.loop(seconds=30)
+    async def my_background_task(self):
+        await self.close_polls()
+        await self.check_askus()
+
+    @my_background_task.before_loop
+    async def before_my_task(self):
+        await self.wait_until_ready()
+
+    async def on_message(self, message: discord.Message):
+        if message.author.id == self.user.id or message.author.bot:
+            return
+        if not message.content.startswith(self.COMMAND_PREFIX):
+            return
+
+        new_content = message.content.removeprefix(self.COMMAND_PREFIX).strip()
+        if new_content.startswith("help"):
+            await message.channel.send("Sent you help in DM !")
+            if message.author.dm_channel is None:
+                await message.author.create_dm()
+            await message.author.dm_channel.send(self.get_help())
+            return
+        if new_content.startswith("question"):
+            question = new_content.removeprefix("question").strip()
+            self.add_question(question)
+            await message.channel.send("J'ai bien ajouté ta question !")
+            return
+
+        if message.channel.type != discord.ChannelType.text:
+            return
+        if new_content.startswith("start"):
+            new_content = new_content.removeprefix("start").strip()
+            try:
+                args, kwargs = json.loads(new_content).values()
+                await self.start_askus(message.channel.id, *args, **kwargs)
+            except Exception as e:
+                await message.channel.send(f"There was an error in your inputs : \n {e}\n Try /poll help !")
+                raise Exception(e)
+            return
+
+        if new_content.startswith("stop"):
+            self.stop_askus(message.channel.id)
+            return
+
+        if new_content.startswith("pause"):
+            self.pause_askus(message.channel.id)
+            return
+
+        if new_content.startswith("nickname"):
+            new_content = new_content.removeprefix("nickname").strip()
+            member_id, nickname = new_content.split(" ", 1)
+            try:
+                member_id = int(member_id)
+            except:
+                message.channel.send("Member id is not an integer")
+                return
+            page = self.nickname_collection.find_one({"_id": message.channel.id})
+            new_nicknames = page["nicknames"]
+            new_nicknames[int(member_id)] = nickname
+            self.nickname_collection.find_one_and_update({"_id": message.channel.id}, {"$set": {"nicknames": new_nicknames}})
+
+    async def check_askus(self):
+        """Checks to see if new polls needs to be posted and poss them
+        """
+        sessions = self.askus_collection.find({"next_poll_time": {"$lt": datetime.now(tz=TZ)}})
+        if not sessions:
+            return
+        questions = self.question_collection.find()
+        for session in sessions:
+            if session["paused"]:
+                continue
+            channel: discord.guild.GuildChannel = self.get_channel(session["_id"])
+            if not channel:
+                continue
+
+            names = self.get_name_map(channel)
+            remaining_questions = {
+                page["_id"]: page["question"] for page in questions if page["_id"] not in session["asked_questions"]
+            }
+            chosen_question = random.choice(list(remaining_questions.keys()))
+            duration = timedelta(
+                **session["poll_duration"]
+            )  # py mongo supports datetime so we have to store timedelta as dict or params
+            closing_time = (datetime.now(tz=TZ) + duration).strftime("%H:%M - %m/%d/%Y")
+            thread_name = "Résultats - " + datetime.now(tz=TZ).strftime("%m%d%Y")
+            message = f"@everyone, il est venu le temps des questions génantes ! Il me reste {len(remaining_questions)} en stock. Le sondage ferme à {closing_time}"
+            question = remaining_questions[chosen_question]
+            message_id = await self.send_poll(
+                channel,
+                question,
+                names,
+                message=message,
+                thread_name=thread_name,
+                duration=duration,
+                mode=self.CUSTOM
+            )
+            if not message_id:
+                continue
+            next_poll_time = datetime.now(tz=TZ).replace(**session["poll_time"]) + timedelta(**session["poll_period"])
+            self.askus_collection.find_one_and_update(
+                {"_id": session["_id"]},
+                {
+                    "$set": {
+                        "next_poll_time": next_poll_time,
+                        "asked_questions": session["asked_questions"].append(chosen_question),
+                    }
+                },
+            )
+
+    async def start_askus(
+        self,
+        channel_id: int,
+        poll_time: Dict[str, int] = {"hours": 21, "minutes": 0, "seconds": 0},
+        poll_duration: Dict[str, int] = {"hours": 14, "minutes": 0, "seconds": 0},
+        poll_period: Dict[str, int] = {"days": 1}
+    ):
+        """Starts a askus session on a channel. there can be only one session per channel. If there is already one, it will just unpause and modify
+        the parameters of the session
+
+        Args:
+            channel_id (int)
+            poll_time (Dict[str, int], optional): time at which to send the poll (will replace current time with those value and add poll period to determine next poll time). Defaults to {"hours": 21, "minutes": 0, "seconds": 0}, regardless of the day, at 21pm.
+            poll_duration (Dict[str, int], optional): duration of the poll. Defaults to {"hours": 14, "minutes": 0, "seconds": 0}.
+            poll_period (Dict[str, int], optional): period at which to send polls on the session. Defaults to {"days": 1}.
+        """
+        possible_session = self.askus_collection.find_one_and_update(
+            {"_id": channel_id}, {"$set": {"paused": False, "poll_time": poll_time, "poll_duration": poll_duration}}
+        )
+        # If there was a session, we unpaused it and updated poll time and duration
+        if possible_session:
+            return
+        # If not we create it
+        self.askus_collection.insert_one(
+            {
+                "_id": channel_id,
+                "poll_time": poll_time,
+                "poll_period": poll_period,
+                "poll_duration": poll_duration,
+                "paused": False,
+                "asked_questions": [],
+                "next_poll_time": datetime.now(tz=TZ),
+            }
+        )
+
+    def stop_askus(self, channel_id: int):
+        """Stops askus session
+        """
+        self.askus_collection.find_one_and_delete({"_id": channel_id})
+
+    def pause_askus(self, channel_id: int):
+        """Pauses askus session
+        """
+        self.askus_collection.find_one_and_update({"_id": channel_id}, {"$set": {"paused": True}})
+
+    def add_nickname(self, channel_id: int, member_id: int, nickname: str):
+        """Adds a nickname to the nickname config for the channel
+        """
+        nicknames = self.nickname_collection.find_one({"_id": channel_id})
+        if not nicknames:
+            nicknames = {"_id": channel_id, "nicknames": {member_id: nickname}}
+            self.nickname_collection.insert_one(nickname)
+        else:
+            nicknames["nicknames"][member_id] = nickname
+            self.nickname_collection.replace_one({"_id": channel_id}, nicknames)
+
+    def add_question(self, question: str):
+        self.question_collection.insert_one({"question": question})
+
+
+def main():
+    intents = discord.Intents.default()
+    intents.members = True
+    intents.message_content = True
+    client = AskUsClient(intents=intents)
+    client.run(TOKEN)
+
+
+if __name__ == "__main__":
+    main()
