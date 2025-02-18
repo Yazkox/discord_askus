@@ -137,8 +137,8 @@ class AskUsClient(PollClient):
             duration = timedelta(
                 **session["poll_duration"]
             )  # py mongo supports datetime so we have to store timedelta as dict or params
-            closing_time = (datetime.now(tz=TZ) + duration).strftime("%H:%M - %m/%d/%Y")
-            thread_name = "Résultats - " + datetime.now(tz=TZ).strftime("%m%d%Y")
+            closing_time = (datetime.now(tz=TZ) + duration).strftime("%H:%M - %d/%m/%Y")
+            thread_name = "Résultats - " + datetime.now(tz=TZ).strftime("%d/%m/%Y")
             message = f"@everyone, il est venu le temps des questions génantes ! Il me reste {len(remaining_questions) - 1} en stock. Le sondage ferme à {closing_time}"
             question = remaining_questions[chosen_question]
             message_id = await self.send_poll(
