@@ -35,14 +35,19 @@ class PollClient(discord.Client):
         super().__init__(*args, **kwargs)
         self.db_url = db_url
         self.db_name = db_name
-        self.db_client: MongoClient = MongoClient(self.db_url)
-        self.database = self.db_client.get_database(self.db_name)
+        self.db_client: MongoClient = None
+        self.database = None
         self.active_poll_collection = None
         self.nickname_collection = None
 
-    def run(self, *args, **kwargs):
+    def setup_database(self) -> None:
+        self.db_client: MongoClient = MongoClient(self.db_url)
+        self.database = self.db_client.get_database(self.db_name)
         self.active_poll_collection = self.database.get_collection("active_polls")
         self.nickname_collection = self.database.get_collection("nicknames")
+
+    def run(self, *args, **kwargs):
+        self.setup_database()
         super().run(*args, **kwargs)
 
     async def setup_hook(self) -> None:
@@ -113,10 +118,7 @@ class PollClient(discord.Client):
         if new_content.startswith("add_nick"):
             poll_id = new_content.removeprefix("add_nick").strip()
             member_id, nickname = new_content.split(" ", 1)
-            page = self.nickname_collection.find_one({"_id": message.channel.id})
-            new_nicknames = page["nicknames"]
-            new_nicknames[int(member_id)] = nickname
-            self.nickname_collection.find_one_and_update({"_id": message.channel.id}, {"$set":{"nicknames": new_nicknames}})           
+            self.add_nickname(message.channel.id, member_id, nickname)      
 
         if message.channel.type != discord.ChannelType.private:
             return
@@ -192,6 +194,7 @@ class PollClient(discord.Client):
             }
         )
         print(f"Successfuly sent poll in {channel.name}!")
+        return poll_message.id
 
     async def _send_homemade_poll(
         self,
@@ -248,6 +251,7 @@ class PollClient(discord.Client):
             }
         )
         print(f"Successfuly sent poll in {channel.name} !")
+        return poll_message.id
 
     async def send_poll(
         self,
@@ -316,10 +320,10 @@ class PollClient(discord.Client):
         """Fill nickname maps of any missing member by their discord nickname
         """
         nickname_page = self.nickname_collection.find_one({"_id": channel.id})
-        nickname_map = self.nickname_collection.find_one({"_id": channel.id})["nicknames"] if nickname_page else {}
+        nickname_map = nickname_page["nicknames"] if nickname_page else {}
         filtered_members = [member for member in channel.members if not member.bot]
         nicknames = {
-            member.id: nickname_map[member.id] if member.id in nickname_map.keys() else member.nick
+            member.id: nickname_map[str(member.id)] if str(member.id) in nickname_map.keys() else member.nick
             for member in filtered_members
         }
         return nicknames
@@ -368,6 +372,17 @@ class PollClient(discord.Client):
         )
         embed = discord.Embed(description=description)
         return embed
+
+    def add_nickname(self, channel_id: int, member_id: str, nickname: str):
+        """Adds a nickname to the nickname config for the channel
+        """
+        nicknames = self.nickname_collection.find_one({"_id": channel_id})
+        if not nicknames:
+            nicknames = {"_id": channel_id, "nicknames": {member_id: nickname}}
+            self.nickname_collection.insert_one(nicknames)
+        else:
+            nicknames["nicknames"][member_id] = nickname
+            self.nickname_collection.replace_one({"_id": channel_id}, nicknames)
 
     def get_help(self):
         return "Not implemented yet"

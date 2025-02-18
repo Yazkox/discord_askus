@@ -9,7 +9,7 @@ import random
 import os
 
 load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN =  os.getenv("DISCORD_TOKEN")
 TZ = timezone.utc
 
 
@@ -31,10 +31,10 @@ class AskUsClient(PollClient):
         self.askus_collection = None
         self.question_collection = None
 
-    def run(self, *args, **kwargs):
+    def setup_database(self):
+        super().setup_database()
         self.askus_collection = self.database.get_collection("askus")
         self.question_collection = self.database.get_collection("questions")
-        super().run(*args, **kwargs)
 
     async def setup_hook(self) -> None:
         self.my_background_task.start()
@@ -77,10 +77,10 @@ class AskUsClient(PollClient):
             new_content = new_content.removeprefix("start").strip()
             try:
                 args, kwargs = json.loads(new_content).values()
-                await self.start_askus(message.channel.id, *args, **kwargs)
+                self.start_askus(message.channel.id, *args, **kwargs)
             except Exception as e:
                 await message.channel.send(f"There was an error in your inputs : \n {e}\n Try /poll help !")
-                raise Exception(e)
+                raise Exception(e.with_traceback())
             return
 
         if new_content.startswith("stop"):
@@ -97,12 +97,18 @@ class AskUsClient(PollClient):
             try:
                 member_id = int(member_id)
             except:
-                message.channel.send("Member id is not an integer")
+                await message.channel.send("Member id is not an integer")
                 return
             page = self.nickname_collection.find_one({"_id": message.channel.id})
+            print(page)
+            if not page:
+                print("adding page")
+                page = {"_id": message.channel.id, "nicknames": {}}
+                self.nickname_collection.insert_one(page)
             new_nicknames = page["nicknames"]
-            new_nicknames[int(member_id)] = nickname
+            new_nicknames[str(member_id)] = nickname
             self.nickname_collection.find_one_and_update({"_id": message.channel.id}, {"$set": {"nicknames": new_nicknames}})
+            await message.channel.send("J'ai bien ajouté le nickname")
 
     async def check_askus(self):
         """Checks to see if new polls needs to be posted and poss them
@@ -122,13 +128,18 @@ class AskUsClient(PollClient):
             remaining_questions = {
                 page["_id"]: page["question"] for page in questions if page["_id"] not in session["asked_questions"]
             }
+            if not remaining_questions:
+                self.pause_askus(channel.id)
+                await channel.send("Je n'ai plus de question à poser, j'ai pausé la session, n'hésitez pas à en rajouter en tapant /askus question 'question' en DM !")
+                raise Exception("No remaining questions, paused the session")
+                
             chosen_question = random.choice(list(remaining_questions.keys()))
             duration = timedelta(
                 **session["poll_duration"]
             )  # py mongo supports datetime so we have to store timedelta as dict or params
             closing_time = (datetime.now(tz=TZ) + duration).strftime("%H:%M - %m/%d/%Y")
             thread_name = "Résultats - " + datetime.now(tz=TZ).strftime("%m%d%Y")
-            message = f"@everyone, il est venu le temps des questions génantes ! Il me reste {len(remaining_questions)} en stock. Le sondage ferme à {closing_time}"
+            message = f"@everyone, il est venu le temps des questions génantes ! Il me reste {len(remaining_questions) - 1} en stock. Le sondage ferme à {closing_time}"
             question = remaining_questions[chosen_question]
             message_id = await self.send_poll(
                 channel,
@@ -141,21 +152,22 @@ class AskUsClient(PollClient):
             )
             if not message_id:
                 continue
+            session["asked_questions"].append(chosen_question)
             next_poll_time = datetime.now(tz=TZ).replace(**session["poll_time"]) + timedelta(**session["poll_period"])
             self.askus_collection.find_one_and_update(
                 {"_id": session["_id"]},
                 {
                     "$set": {
                         "next_poll_time": next_poll_time,
-                        "asked_questions": session["asked_questions"].append(chosen_question),
+                        "asked_questions": session["asked_questions"],
                     }
                 },
             )
 
-    async def start_askus(
+    def start_askus(
         self,
         channel_id: int,
-        poll_time: Dict[str, int] = {"hours": 21, "minutes": 0, "seconds": 0},
+        poll_time: Dict[str, int] = {"hour": 21, "minute": 0, "second": 0},
         poll_duration: Dict[str, int] = {"hours": 14, "minutes": 0, "seconds": 0},
         poll_period: Dict[str, int] = {"days": 1}
     ):
@@ -197,19 +209,8 @@ class AskUsClient(PollClient):
         """
         self.askus_collection.find_one_and_update({"_id": channel_id}, {"$set": {"paused": True}})
 
-    def add_nickname(self, channel_id: int, member_id: int, nickname: str):
-        """Adds a nickname to the nickname config for the channel
-        """
-        nicknames = self.nickname_collection.find_one({"_id": channel_id})
-        if not nicknames:
-            nicknames = {"_id": channel_id, "nicknames": {member_id: nickname}}
-            self.nickname_collection.insert_one(nickname)
-        else:
-            nicknames["nicknames"][member_id] = nickname
-            self.nickname_collection.replace_one({"_id": channel_id}, nicknames)
-
     def add_question(self, question: str):
-        self.question_collection.insert_one({"question": question})
+        return self.question_collection.insert_one({"question": question})
 
 
 def main():
