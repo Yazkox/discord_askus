@@ -145,13 +145,14 @@ class PollClient(discord.Client):
         # constructing the variable to get the new embed of the result, then edit the message with the new embed
         thread = poll_msg.thread
         result_msg = thread.get_partial_message(doc["results_id"])
-        doc["results"][payload.user_id] = answer
+        names = self.get_name_map(channel)
+        doc["results"][str(payload.user_id)] = answer
         votes = {str(key): [] for key in doc["answers"].keys()}
-        name_map = self.get_name_map(channel)
         for votant, vote in doc["results"].items():
-            votes[vote].append(name_map[votant])
-        await result_msg.edit(embed=self._get_results_embed(doc["answers"].values(), [value for _, value in votes.items()]))
-        self.active_poll_collection.find_one_and_update({"_id": payload.message_id}, {"$set": {"results": votes}})
+            votes[str(vote)].append(names[int(votant)])
+        print(votes)
+        await result_msg.edit(embed=self._get_results_embed(doc["answers"].values(), votes.values()))
+        self.active_poll_collection.find_one_and_update({"_id": payload.message_id}, {"$set": {"results":  doc["results"]}})
         return
 
     async def _send_discord_poll(
