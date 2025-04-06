@@ -100,9 +100,7 @@ class AskUsClient(PollClient):
                 await message.channel.send("Member id is not an integer")
                 return
             page = self.nickname_collection.find_one({"_id": message.channel.id})
-            print(page)
             if not page:
-                print("adding page")
                 page = {"_id": message.channel.id, "nicknames": {}}
                 self.nickname_collection.insert_one(page)
             new_nicknames = page["nicknames"]
@@ -110,13 +108,16 @@ class AskUsClient(PollClient):
             self.nickname_collection.find_one_and_update({"_id": message.channel.id}, {"$set": {"nicknames": new_nicknames}})
             await message.channel.send("J'ai bien ajouté le nickname")
 
+    async def new_askus(self, channel_id: int):
+        sessions = self.askus_collection.find({"next_poll_time": channel_id})
+
+        
     async def check_askus(self):
         """Checks to see if new polls needs to be posted and poss them
         """
         sessions = self.askus_collection.find({"next_poll_time": {"$lt": datetime.now(tz=TZ)}})
         if not sessions:
             return
-        questions = self.question_collection.find()
         for session in sessions:
             if session["paused"]:
                 continue
@@ -124,6 +125,7 @@ class AskUsClient(PollClient):
             if not channel:
                 continue
 
+            questions = self.question_collection.find()
             names = self.get_name_map(channel)
             remaining_questions = {
                 page["_id"]: page["question"] for page in questions if page["_id"] not in session["asked_questions"]
@@ -131,7 +133,6 @@ class AskUsClient(PollClient):
             if not remaining_questions:
                 self.pause_askus(channel.id)
                 await channel.send("Je n'ai plus de question à poser, j'ai pausé la session, n'hésitez pas à en rajouter en tapant /askus question 'question' en DM !")
-                raise Exception("No remaining questions, paused the session")
                 
             chosen_question = random.choice(list(remaining_questions.keys()))
             duration = timedelta(
@@ -163,6 +164,7 @@ class AskUsClient(PollClient):
                     }
                 },
             )
+        return
 
     def start_askus(
         self,

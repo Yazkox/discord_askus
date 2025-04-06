@@ -82,7 +82,6 @@ class PollClient(discord.Client):
         if new_content.startswith("create"):
             new_content = new_content.removeprefix("create").strip()
             try:
-                print(json.loads(new_content).values())
                 args, kwargs = json.loads(new_content).values()
                 await self.send_poll(message.channel, *args, **kwargs)
             except Exception as e:
@@ -150,7 +149,6 @@ class PollClient(discord.Client):
         votes = {str(key): [] for key in doc["answers"].keys()}
         for votant, vote in doc["results"].items():
             votes[str(vote)].append(names[int(votant)])
-        print(votes)
         await result_msg.edit(embed=self._get_results_embed(doc["answers"].values(), votes.values()))
         self.active_poll_collection.find_one_and_update({"_id": payload.message_id}, {"$set": {"results":  doc["results"]}})
         return
@@ -369,7 +367,9 @@ class PollClient(discord.Client):
         sorting_key = lambda item: len(item[1])
         sorted_results = sorted(filtered_results, key=sorting_key, reverse=True)
         description = "\n".join(
-            f"{answer:11} : {len(votants):2} |  " + ", ".join(votant for votant in votants) for answer, votants in sorted_results
+            f"{answer:11} : {len(votants):2} |  " + ", ".join(votant for votant in votants) for answer, votants 
+                                                                                            in sorted_results
+                                                                                            if len(votants) > 0
         )
         embed = discord.Embed(description=description)
         return embed
