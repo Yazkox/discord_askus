@@ -366,7 +366,7 @@ class PollClient(discord.Client):
         filtered_results = [pair for pair in zip(answers, votes) if len(pair[1]) >= 0]# removing answers with zero votes
         sorting_key = lambda item: len(item[1])
         sorted_results = sorted(filtered_results, key=sorting_key, reverse=True)
-        description = "\n".join(
+        description = "-----------\n" + "\n".join(
             f"{answer:11} : {len(votants):2} |  " + ", ".join(votant for votant in votants) for answer, votants 
                                                                                             in sorted_results
                                                                                             if len(votants) > 0
