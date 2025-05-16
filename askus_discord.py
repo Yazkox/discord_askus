@@ -66,8 +66,13 @@ class AskUsClient(PollClient):
             await message.author.dm_channel.send(self.get_help())
             return
         if new_content.startswith("question"):
-            question = new_content.removeprefix("question").strip()
-            self.add_question(question)
+            new_content = new_content.removeprefix("question").strip()
+            parts = new_content.split("|")
+            question = parts[0]
+            answers = []
+            if len(parts) > 1:
+                answers = parts[1].split(",")
+            self.add_question(question, answers=answers)
             await message.channel.send("J'ai bien ajouté ta question !")
             return
 
@@ -108,9 +113,6 @@ class AskUsClient(PollClient):
             self.nickname_collection.find_one_and_update({"_id": message.channel.id}, {"$set": {"nicknames": new_nicknames}})
             await message.channel.send("J'ai bien ajouté le nickname")
 
-    async def new_askus(self, channel_id: int):
-        sessions = self.askus_collection.find({"next_poll_time": channel_id})
-
         
     async def check_askus(self):
         """Checks to see if new polls needs to be posted and poss them
@@ -126,26 +128,30 @@ class AskUsClient(PollClient):
                 continue
 
             questions = self.question_collection.find()
-            names = self.get_name_map(channel)
-            remaining_questions = {
-                page["_id"]: page["question"] for page in questions if page["_id"] not in session["asked_questions"]
-            }
+            remaining_questions = [
+                page for page in questions if page["_id"] not in session["asked_questions"]
+            ]
             if not remaining_questions:
                 self.pause_askus(channel.id)
                 await channel.send("Je n'ai plus de question à poser, j'ai pausé la session, n'hésitez pas à en rajouter en tapant /askus question 'question' en DM !")
-                
-            chosen_question = random.choice(list(remaining_questions.keys()))
+                continue
+
+            question = random.choice(remaining_questions)
             duration = timedelta(
                 **session["poll_duration"]
             )  # py mongo supports datetime so we have to store timedelta as dict or params
             closing_time = (datetime.now(tz=TZ) + duration).strftime("%H:%M - %d/%m/%Y")
             thread_name = "Résultats - " + datetime.now(tz=TZ).strftime("%d/%m/%Y")
-            message = f"<@&1342105732463460392>, il est venu le temps des questions génantes ! Il me reste {len(remaining_questions) - 1} questions en stock. Le sondage ferme à {closing_time}"
-            question = remaining_questions[chosen_question]
+            message = f"<@&1342105732463460392>, il est venu le temps des questions génantes ! Il me reste {len(remaining_questions) - 1} question(s) en stock. Le sondage ferme à {closing_time}"
+            
+            if "answers" in question and question["answers"]:
+                answers = question["answers"]
+            else:
+                answers = self.get_name_map(channel)
             message_id = await self.send_poll(
                 channel,
-                question,
-                names,
+                question["question"],
+                answers,
                 message=message,
                 thread_name=thread_name,
                 duration=duration,
@@ -153,7 +159,7 @@ class AskUsClient(PollClient):
             )
             if not message_id:
                 continue
-            session["asked_questions"].append(chosen_question)
+            session["asked_questions"].append(question["_id"])
             next_poll_time = datetime.now(tz=TZ).replace(**session["poll_time"]) + timedelta(**session["poll_period"])
             self.askus_collection.find_one_and_update(
                 {"_id": session["_id"]},
@@ -169,8 +175,8 @@ class AskUsClient(PollClient):
     def start_askus(
         self,
         channel_id: int,
-        poll_time: Dict[str, int] = {"hour": 21, "minute": 0, "second": 0},
-        poll_duration: Dict[str, int] = {"hours": 14, "minutes": 0, "seconds": 0},
+        poll_time: Dict[str, int] = {"hour": 12, "minute": 0, "second": 0},
+        poll_duration: Dict[str, int] = {"hours": 20, "minutes": 0, "seconds": 0},
         poll_period: Dict[str, int] = {"days": 1}
     ):
         """Starts a askus session on a channel. there can be only one session per channel. If there is already one, it will just unpause and modify
@@ -211,8 +217,8 @@ class AskUsClient(PollClient):
         """
         self.askus_collection.find_one_and_update({"_id": channel_id}, {"$set": {"paused": True}})
 
-    def add_question(self, question: str):
-        return self.question_collection.insert_one({"question": question})
+    def add_question(self, question: str, answers: list = []):
+        return self.question_collection.insert_one({"question": question, "answers": answers})
 
 
 def main():
